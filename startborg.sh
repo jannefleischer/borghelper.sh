@@ -37,6 +37,7 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       echo "This parameter we can't understand:"
+      echo "possible are: -r (repo), -c (composestack), -f (composefile), -e (exclude), -a (archive), -h (hot)"
       echo $1
       echo "${1#*=}"
       exit 1
@@ -99,7 +100,7 @@ ENDSTRING="$REPO/::$ARCHIVENAME $COMPOSESTACK $COMPOSENAME"
 
 if [[ -v ENDSTRING && -z $ENDSTRING ]]
 then
-  printf "sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats $EXCLUDED_FLAG$ENDSTRING\n"
+  printf "sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats $EXCLUDED_FLAG $ENDSTRING\n"
   printf "Endstring missing, something wrong"
   exit 2
 else
@@ -118,7 +119,7 @@ else
     sudo docker compose -f $COMPOSESTACK/$COMPOSEFILE start
   else
     # only start borgbackup
-    printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment 'HOT dump! - taken while docker was running.' $EXCLUDED_FLAG$ENDSTRING\n"
+    printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment 'HOT dump! - taken while docker was running.' $EXCLUDED_FLAG $ENDSTRING\n"
     sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment "HOT dump! - taken while docker was running." $EXCLUDED_FLAG $ENDSTRING
   fi
 fi
