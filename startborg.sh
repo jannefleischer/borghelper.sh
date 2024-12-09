@@ -61,13 +61,14 @@ fi
 
 ISODATE=$(date --iso-8601)
 LISTCOMMAND=$(sudo borg list --short --prefix $ISODATE $REPO)
-printf "Checking existing archives: $LISTCOMMAND\n"
-EXISTING_ARCHIVES=$(wc -l <<< $LISTCOMMAND)
-#printf $EXISTING_ARCHIVES
+#echo "command for existing archives: sudo borg list --short --prefix $ISODATE $REPO"
+echo "Existing archives: $LISTCOMMAND \n"
+
+EXISTING_ARCHIVES=$(sudo borg list --short --prefix $ISODATE $REPO | wc -l)
+echo "Existierende Archive:" $EXISTING_ARCHIVES "\n"
 
 #check if archive of today does exist. If it does add a counter to it.
-if [[ -v EXISTING_ARCHIVES && -z $EXISTING_ARCHIVES ]]
-then
+if [[ $EXISTING_ARCHIVES -eq 0 ]]; then
   ISODATE=$ISODATE
 else
   ISODATE+=-$((EXISTING_ARCHIVES+1))
@@ -96,7 +97,7 @@ fi
 
 echo $EXCLUDE_FLAG
 
-ENDSTRING="$REPO/::$ARCHIVENAME $COMPOSESTACK $COMPOSENAME"
+ENDSTRING="$REPO/::$ARCHIVENAME $COMPOSESTACK$COMPOSEFILE"
 
 if [[ -v ENDSTRING && -z $ENDSTRING ]]
 then
@@ -107,7 +108,7 @@ else
   if [[ -z "${HOT}" ]]
   then
     # stop the stack
-    printf "\nRUNNING: sudo docker compose -f" $COMPOSESTACK/$COMPOSEFILE "stop\n"
+    printf "\nRUNNING: sudo docker compose -f " $COMPOSESTACK/$COMPOSEFILE "stop\n"
     sudo docker compose -f $COMPOSESTACK/$COMPOSEFILE stop
 
     # start borgbackup
@@ -123,3 +124,11 @@ else
     sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment "HOT dump! - taken while docker was running." $EXCLUDED_FLAG $ENDSTRING
   fi
 fi
+
+# start borgbackup
+
+LISTFORMAT="{archive}\t{time}\t{comment}\n"
+printf "\nRUNNING: sudo borg list $REPO\n"
+ARCHIVELIST=$(sudo borg list $REPO --format "$LISTFORMAT")
+printf "$ARCHIVELIST"
+
