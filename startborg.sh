@@ -60,11 +60,11 @@ then
 fi
 
 ISODATE=$(date --iso-8601)
-LISTCOMMAND=$(sudo borg list --short --glob-archives $ISODATE $REPO)
+LISTCOMMAND=$(sudo borg list --short --glob-archives "$ISODATE*" $REPO)
 #echo "command for existing archives: sudo borg list --short --glob-archives $ISODATE $REPO"
 echo "Existing archives: $LISTCOMMAND \n"
 
-EXISTING_ARCHIVES=$(sudo borg list --short --glob-archives $ISODATE $REPO | wc -l)
+EXISTING_ARCHIVES=$(sudo borg list --short --glob-archives "$ISODATE*" $REPO | wc -l)
 echo "Existierende Archive:" $EXISTING_ARCHIVES "\n"
 
 #check if archive of today does exist. If it does add a counter to it.
