@@ -15,6 +15,8 @@
 # * along with this program. If not, see <http://www.gnu.org/licenses/>.
 # */
 
+EXCLUDES=()
+
 while [ $# -gt 0 ]; do
   case "$1" in
     -r=*|--repo=*)
@@ -27,7 +29,8 @@ while [ $# -gt 0 ]; do
       COMPOSEFILE="${1#*=}"
       ;;
     -e=*|--exclude=*)
-      EXCLUDED="${1#*=}"
+      EXCLUDES+=("${1#*=}")
+      #EXCLUDED="${1#*=}"
       ;;
     -a=*|--archive=*)
       ARCHIVENAME="${1#*=}"
@@ -83,25 +86,31 @@ fi
 echo REPO=$REPO
 echo COMPOSESTACK=$COMPOSESTACK
 echo COMPOSEFILE=$COMPOSEFILE
-echo EXCLUDED=$EXCLUDED
+echo EXCLUDED=${EXCLUDES[@]}
 echo ARCHIVENAME=$ARCHIVENAME
 echo HOT=$HOT
 
 #check if something is to be excluded
-if [[ -v EXCLUDED && -z $EXCLUDED ]]
-then
-  EXCLUDED_FLAG=""
-else
-  EXCLUDED_FLAG="--exclude \"$EXCLUDED\""
-fi
+EXCLUDE_ARGS=()
+for p in "${EXCLUDES[@]}"; do
+  EXCLUDE_ARGS+=(--exclude "$p")
+done
+#if [[ -v EXCLUDED && -z $EXCLUDED ]]
+#then
+#  EXCLUDED_FLAG=""
+#else
+#  EXCLUDED_FLAG="--exclude \"$EXCLUDED\""
+#fi
 
 echo $EXCLUDE_FLAG
 
-ENDSTRING="$REPO/::$ARCHIVENAME $COMPOSESTACK"
+ARCHIVE_ARG="$REPO/::$ARCHIVENAME"
+TARGET_PATH="$COMPOSESTACK"
+#ENDSTRING="$REPO/::$ARCHIVENAME $COMPOSESTACK"
 
 if [[ -v ENDSTRING && -z $ENDSTRING ]]
 then
-  printf "sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats $EXCLUDED_FLAG $ENDSTRING\n"
+  printf "sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"\n"
   printf "Endstring missing, something wrong"
   exit 2
 else
@@ -112,16 +121,26 @@ else
     sudo docker compose -f $COMPOSESTACK/$COMPOSEFILE stop
 
     # start borgbackup
-    printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats $EXCLUDED_FLAG $ENDSTRING\n"
-    sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats $EXCLUDED_FLAG $ENDSTRING
+    BORGCMD=(sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH")
+
+    # menschenlesbare, sicher gequotete Ausgabe
+    printf "\nRUNNING: "
+    printf '%q ' "${BORGCMD[@]}"
+    printf "\n"
+
+    # ausführen
+    "${BORGCMD[@]}"
+
+    #printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}"  "$ARCHIVE_ARG" "$TARGET_PATH"\n"
+    #sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}"  "$ARCHIVE_ARG" "$TARGET_PATH"
 
     # restart the stack
     printf "\nRUNNING: sudo docker compose -f" $COMPOSESTACK/$COMPOSEFILE "start\n"
     sudo docker compose -f $COMPOSESTACK/$COMPOSEFILE start
   else
     # only start borgbackup
-    printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment 'HOT dump! - taken while docker was running.' $EXCLUDED_FLAG $ENDSTRING\n"
-    sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment "HOT dump! - taken while docker was running." $EXCLUDED_FLAG $ENDSTRING
+    printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment 'HOT dump! - taken while docker was running.' "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"\n"
+    sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment "HOT dump! - taken while docker was running." "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"
   fi
 fi
 
