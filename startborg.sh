@@ -169,7 +169,7 @@ then
 fi
 
 # setting default compose file name.
-if [[ -v COMPOSEFILE || -z $COMPOSEFILE ]]
+if [[ ! -v COMPOSEFILE || -z $COMPOSEFILE ]]
 then
   #defaut value
   COMPOSEFILE="docker-compose.yml"
@@ -191,7 +191,7 @@ else
 fi
 
 #generate Archivename if not given
-if [[ -v ARCHIVENAME || -z $ARCHIVENAME ]]
+if [[ ! -v ARCHIVENAME || -z $ARCHIVENAME ]]
 then
   ARCHIVENAME=$ISODATE
 fi
