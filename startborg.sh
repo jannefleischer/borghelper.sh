@@ -102,6 +102,7 @@ EXCLUDES=()
 COMPOSEFILES=()
 PDOWN_ARGS=()
 PUP_ARGS=()
+SUP_SERVICES=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -118,6 +119,10 @@ while [ $# -gt 0 ]; do
     --pup=*)
       # mehrfach angebbar: Compose-Profile, die beim Starten aktiv sind
       PUP_ARGS+=(--profile "${1#*=}")
+      ;;
+    --sup=*)
+      # mehrfach angebbar: einzelne Dienste, die unabhaengig vom Profil gestartet werden
+      SUP_SERVICES+=("${1#*=}")
       ;;
     -f=*|--composefile=*)
       # mehrfach angebbar: gestoppt wird in umgekehrter, gestartet in angegebener Reihenfolge
@@ -144,7 +149,7 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       echo "This parameter we can't understand:"
-      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable), --pdown (stop profile, repeatable), --pup (start profile, repeatable), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
+      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable), --pdown (stop profile, repeatable), --pup (start profile, repeatable), --sup (start service regardless of profile, repeatable), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
       echo $1
       echo "${1#*=}"
       exit 1
@@ -206,6 +211,17 @@ stack_start() {
   for f in "${COMPOSEFILES[@]}"; do
     printf "\nRUNNING: sudo docker compose -f %s %s start\n" "$COMPOSESTACK/$f" "${PUP_ARGS[*]}"
     sudo docker compose -f "$COMPOSESTACK/$f" "${PUP_ARGS[@]}" start || rc=$?
+
+    # per --sup genannte Dienste dieser Datei zusaetzlich starten (Profil per "*" freigeschaltet)
+    local svc services=() all
+    all=$(sudo docker compose -f "$COMPOSESTACK/$f" --profile "*" config --services 2>/dev/null)
+    for svc in "${SUP_SERVICES[@]}"; do
+      grep -qxF "$svc" <<< "$all" && services+=("$svc")
+    done
+    if [[ ${#services[@]} -gt 0 ]]; then
+      printf "\nRUNNING: sudo docker compose -f %s --profile '*' start %s\n" "$COMPOSESTACK/$f" "${services[*]}"
+      sudo docker compose -f "$COMPOSESTACK/$f" --profile "*" start "${services[@]}" || rc=$?
+    fi
   done
   return $rc
 }
