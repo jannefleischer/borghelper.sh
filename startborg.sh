@@ -100,6 +100,7 @@ BORG_SUDO_ENV=(BORG_PASSPHRASE="$BORG_PASSPHRASE" BORG_RELOCATED_REPO_ACCESS_IS_
 
 EXCLUDES=()
 COMPOSEFILES=()
+PROFILE_ARGS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -108,6 +109,10 @@ while [ $# -gt 0 ]; do
       ;;
     -c=*|--composestack=*)
       COMPOSESTACK="${1#*=}"
+      ;;
+    -P=*|--profile=*)
+      # mehrfach angebbar: Compose-Profile, deren Dienste mitgestoppt/-gestartet werden
+      PROFILE_ARGS+=(--profile "${1#*=}")
       ;;
     -f=*|--composefile=*)
       # mehrfach angebbar: gestoppt wird in umgekehrter, gestartet in angegebener Reihenfolge
@@ -134,7 +139,7 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       echo "This parameter we can't understand:"
-      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable),-e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
+      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable), -P (profile, repeatable), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
       echo $1
       echo "${1#*=}"
       exit 1
@@ -184,8 +189,8 @@ stack_stop() {
   local rc=0 i f
   for (( i=${#COMPOSEFILES[@]}-1; i>=0; i-- )); do
     f="${COMPOSEFILES[$i]}"
-    printf "\nRUNNING: sudo docker compose -f %s stop\n" "$COMPOSESTACK/$f"
-    sudo docker compose -f "$COMPOSESTACK/$f" stop || rc=$?
+    printf "\nRUNNING: sudo docker compose -f %s %s stop\n" "$COMPOSESTACK/$f" "${PROFILE_ARGS[*]}"
+    sudo docker compose -f "$COMPOSESTACK/$f" "${PROFILE_ARGS[@]}" stop || rc=$?
   done
   return $rc
 }
@@ -194,8 +199,8 @@ stack_stop() {
 stack_start() {
   local rc=0 f
   for f in "${COMPOSEFILES[@]}"; do
-    printf "\nRUNNING: sudo docker compose -f %s start\n" "$COMPOSESTACK/$f"
-    sudo docker compose -f "$COMPOSESTACK/$f" start || rc=$?
+    printf "\nRUNNING: sudo docker compose -f %s %s start\n" "$COMPOSESTACK/$f" "${PROFILE_ARGS[*]}"
+    sudo docker compose -f "$COMPOSESTACK/$f" "${PROFILE_ARGS[@]}" start || rc=$?
   done
   return $rc
 }
