@@ -99,6 +99,7 @@ send_alert_mail() {
 BORG_SUDO_ENV=(BORG_PASSPHRASE="$BORG_PASSPHRASE" BORG_RELOCATED_REPO_ACCESS_IS_OK="$BORG_RELOCATED_REPO_ACCESS_IS_OK")
 
 EXCLUDES=()
+COMPOSEFILES=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -109,7 +110,8 @@ while [ $# -gt 0 ]; do
       COMPOSESTACK="${1#*=}"
       ;;
     -f=*|--composefile=*)
-      COMPOSEFILE="${1#*=}"
+      # mehrfach angebbar: gestoppt wird in umgekehrter, gestartet in angegebener Reihenfolge
+      COMPOSEFILES+=("${1#*=}")
       ;;
     -e=*|--exclude=*)
       EXCLUDES+=("${1#*=}")
@@ -132,7 +134,7 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       echo "This parameter we can't understand:"
-      echo "possible are: -r (repo), -c (composestack), -f (composefile), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
+      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable),-e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
       echo $1
       echo "${1#*=}"
       exit 1
@@ -169,11 +171,34 @@ then
 fi
 
 # setting default compose file name.
-if [[ -v COMPOSEFILE || -z $COMPOSEFILE ]]
+if [[ ${#COMPOSEFILES[@]} -eq 0 ]]
 then
   #defaut value
-  COMPOSEFILE="docker-compose.yml"
+  COMPOSEFILES=("docker-compose.yml")
 fi
+# fuer Pre-/Mid-/Post-Skripte und Ausgaben: leerzeichengetrennte Liste
+COMPOSEFILE="${COMPOSEFILES[*]}"
+
+# stoppt alle Compose-Dateien in umgekehrter Reihenfolge (abhaengige Dienste zuerst)
+stack_stop() {
+  local rc=0 i f
+  for (( i=${#COMPOSEFILES[@]}-1; i>=0; i-- )); do
+    f="${COMPOSEFILES[$i]}"
+    printf "\nRUNNING: sudo docker compose -f %s stop\n" "$COMPOSESTACK/$f"
+    sudo docker compose -f "$COMPOSESTACK/$f" stop || rc=$?
+  done
+  return $rc
+}
+
+# startet alle Compose-Dateien in angegebener Reihenfolge
+stack_start() {
+  local rc=0 f
+  for f in "${COMPOSEFILES[@]}"; do
+    printf "\nRUNNING: sudo docker compose -f %s start\n" "$COMPOSESTACK/$f"
+    sudo docker compose -f "$COMPOSESTACK/$f" start || rc=$?
+  done
+  return $rc
+}
 
 ISODATE=$(date --iso-8601)
 LISTCOMMAND=$(sudo "${BORG_SUDO_ENV[@]}" borg list --short --glob-archives "$ISODATE*" $REPO)
@@ -191,7 +216,7 @@ else
 fi
 
 #generate Archivename if not given
-if [[ -v ARCHIVENAME || -z $ARCHIVENAME ]]
+if [[ ! -v ARCHIVENAME || -z $ARCHIVENAME ]]
 then
   ARCHIVENAME=$ISODATE
 fi
@@ -246,8 +271,13 @@ else
     fi
 
     # stop the stack
-    printf "\nRUNNING: sudo docker compose -f " $COMPOSESTACK/$COMPOSEFILE "stop\n"
-    sudo docker compose -f $COMPOSESTACK/$COMPOSEFILE stop
+    if ! stack_stop
+    then
+      printf "\nError: stopping the stack failed. Restarting stack and aborting backup.\n"
+      stack_start
+      send_alert_mail "[borg] Docker-Stack konnte nicht gestoppt werden: $COMPOSESTACK" "Der Stack '$COMPOSESTACK' ($COMPOSEFILE) konnte vor dem Backup nicht gestoppt werden. Es wurde kein Backup erstellt.\n\nHost: $(hostname)\nZeitpunkt: $(date --iso-8601=seconds)\n\nBitte manuell pruefen!"
+      exit 5
+    fi
 
     # run mid-script, if given, now that the stack is stopped
     if [[ -n "$MIDSCRIPT" ]]
@@ -258,7 +288,7 @@ else
       if [[ $MIDSCRIPT_STATUS -ne 0 ]]
       then
         printf "\nError: mid-script '%s' failed with exit code %d. Restarting stack and aborting backup.\n" "$MIDSCRIPT" "$MIDSCRIPT_STATUS"
-        sudo docker compose -f $COMPOSESTACK/$COMPOSEFILE start
+        stack_start
         exit 3
       fi
     fi
@@ -282,11 +312,10 @@ else
     #sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}"  "$ARCHIVE_ARG" "$TARGET_PATH"
 
     # restart the stack
-    printf "\nRUNNING: sudo docker compose -f" $COMPOSESTACK/$COMPOSEFILE "start\n"
-    sudo docker compose -f $COMPOSESTACK/$COMPOSEFILE start
+    stack_start
     DOCKER_START_EXIT=$?
     if [[ $DOCKER_START_EXIT -ne 0 ]]; then
-      send_alert_mail "[borg] Docker-Stack konnte nicht neu gestartet werden: $COMPOSESTACK" "Der Stack '$COMPOSESTACK' ($COMPOSESTACK/$COMPOSEFILE) konnte nach dem Backup nicht wieder gestartet werden (Exit-Code $DOCKER_START_EXIT).\n\nHost: $(hostname)\nZeitpunkt: $(date --iso-8601=seconds)\n\nBitte manuell pruefen!"
+      send_alert_mail "[borg] Docker-Stack konnte nicht neu gestartet werden: $COMPOSESTACK" "Der Stack '$COMPOSESTACK' ($COMPOSEFILE) konnte nach dem Backup nicht wieder gestartet werden (Exit-Code $DOCKER_START_EXIT).\n\nHost: $(hostname)\nZeitpunkt: $(date --iso-8601=seconds)\n\nBitte manuell pruefen!"
     fi
 
     # run post-script, if given, now that the stack is running again
