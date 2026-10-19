@@ -111,7 +111,7 @@ while [ $# -gt 0 ]; do
       COMPOSESTACK="${1#*=}"
       ;;
     -P=*|--profile=*)
-      # mehrfach angebbar: Compose-Profile, deren Dienste mitgestoppt/-gestartet werden
+      # mehrfach angebbar: Compose-Profile, deren Dienste mitgestoppt werden (nur beim Stoppen, der Start bleibt ohne Profil)
       PROFILE_ARGS+=(--profile "${1#*=}")
       ;;
     -f=*|--composefile=*)
@@ -199,8 +199,8 @@ stack_stop() {
 stack_start() {
   local rc=0 f
   for f in "${COMPOSEFILES[@]}"; do
-    printf "\nRUNNING: sudo docker compose -f %s %s start\n" "$COMPOSESTACK/$f" "${PROFILE_ARGS[*]}"
-    sudo docker compose -f "$COMPOSESTACK/$f" "${PROFILE_ARGS[@]}" start || rc=$?
+    printf "\nRUNNING: sudo docker compose -f %s start\n" "$COMPOSESTACK/$f"
+    sudo docker compose -f "$COMPOSESTACK/$f" start || rc=$?
   done
   return $rc
 }
