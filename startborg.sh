@@ -103,6 +103,7 @@ COMPOSEFILES=()
 PDOWN_ARGS=()
 PUP_ARGS=()
 SUP_SERVICES=()
+STOP_ARGS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -119,6 +120,10 @@ while [ $# -gt 0 ]; do
     --pup=*)
       # mehrfach angebbar: Compose-Profile, die beim Starten aktiv sind
       PUP_ARGS+=(--profile "${1#*=}")
+      ;;
+    -t=*|--timeout=*)
+      # Frist in Sekunden, bevor docker compose stop per SIGKILL beendet
+      STOP_ARGS=(--timeout "${1#*=}")
       ;;
     --sup=*)
       # mehrfach angebbar: einzelne Dienste, die unabhaengig vom Profil gestartet werden
@@ -149,7 +154,7 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       echo "This parameter we can't understand:"
-      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable), --pdown (stop profile, repeatable), --pup (start profile, repeatable), --sup (start service regardless of profile, repeatable), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
+      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable), --pdown (stop profile, repeatable), --pup (start profile, repeatable), --sup (start service regardless of profile, repeatable), -t (stop timeout in seconds), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
       echo $1
       echo "${1#*=}"
       exit 1
@@ -199,8 +204,8 @@ stack_stop() {
   local rc=0 i f
   for (( i=${#COMPOSEFILES[@]}-1; i>=0; i-- )); do
     f="${COMPOSEFILES[$i]}"
-    printf "\nRUNNING: sudo docker compose -f %s %s stop\n" "$COMPOSESTACK/$f" "${PDOWN_ARGS[*]}"
-    sudo docker compose -f "$COMPOSESTACK/$f" "${PDOWN_ARGS[@]}" stop || rc=$?
+    printf "\nRUNNING: sudo docker compose -f %s %s stop %s\n" "$COMPOSESTACK/$f" "${PDOWN_ARGS[*]}" "${STOP_ARGS[*]}"
+    sudo docker compose -f "$COMPOSESTACK/$f" "${PDOWN_ARGS[@]}" stop "${STOP_ARGS[@]}" || rc=$?
   done
   return $rc
 }
