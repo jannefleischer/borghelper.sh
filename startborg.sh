@@ -190,22 +190,39 @@ then
   exit 2
 fi
 
-# setting default compose file name.
+# ohne -f: ein leerer Eintrag steht fuer "docker compose im Stack-Verzeichnis ohne -f".
+# Compose waehlt dann selbst die Datei(en): COMPOSE_FILE aus der .env des Stacks
+# (mehrere, zusammengefuehrte Dateien) oder compose.yaml/docker-compose.yml.
 if [[ ${#COMPOSEFILES[@]} -eq 0 ]]
 then
-  #defaut value
-  COMPOSEFILES=("docker-compose.yml")
+  COMPOSEFILES=("")
 fi
 # fuer Pre-/Mid-/Post-Skripte und Ausgaben: leerzeichengetrennte Liste
-COMPOSEFILE="${COMPOSEFILES[*]}"
+if [[ -z "${COMPOSEFILES[*]}" ]]; then
+  COMPOSEFILE="(auto: .env/COMPOSE_FILE)"
+else
+  COMPOSEFILE="${COMPOSEFILES[*]}"
+fi
+
+# docker compose fuer eine Datei (-f) oder, bei leerem Dateinamen, im Stack-Verzeichnis.
+# COMPOSE_FILE in der .env wird relativ zum aktuellen Verzeichnis aufgeloest,
+# --project-directory allein reicht dafuer nicht.
+dc() {
+  local f="$1"; shift
+  if [[ -n "$f" ]]; then
+    printf "\nRUNNING: sudo docker compose -f %s %s\n" "$COMPOSESTACK/$f" "$*"
+    sudo docker compose -f "$COMPOSESTACK/$f" "$@"
+  else
+    printf "\nRUNNING: (cd %s && sudo docker compose %s)\n" "$COMPOSESTACK" "$*"
+    ( cd "$COMPOSESTACK" && sudo docker compose "$@" )
+  fi
+}
 
 # stoppt alle Compose-Dateien in umgekehrter Reihenfolge (abhaengige Dienste zuerst)
 stack_stop() {
-  local rc=0 i f
+  local rc=0 i
   for (( i=${#COMPOSEFILES[@]}-1; i>=0; i-- )); do
-    f="${COMPOSEFILES[$i]}"
-    printf "\nRUNNING: sudo docker compose -f %s %s stop %s\n" "$COMPOSESTACK/$f" "${PDOWN_ARGS[*]}" "${STOP_ARGS[*]}"
-    sudo docker compose -f "$COMPOSESTACK/$f" "${PDOWN_ARGS[@]}" stop "${STOP_ARGS[@]}" || rc=$?
+    dc "${COMPOSEFILES[$i]}" "${PDOWN_ARGS[@]}" stop "${STOP_ARGS[@]}" || rc=$?
   done
   return $rc
 }
@@ -214,18 +231,16 @@ stack_stop() {
 stack_start() {
   local rc=0 f
   for f in "${COMPOSEFILES[@]}"; do
-    printf "\nRUNNING: sudo docker compose -f %s %s start\n" "$COMPOSESTACK/$f" "${PUP_ARGS[*]}"
-    sudo docker compose -f "$COMPOSESTACK/$f" "${PUP_ARGS[@]}" start || rc=$?
+    dc "$f" "${PUP_ARGS[@]}" start || rc=$?
 
     # per --sup genannte Dienste dieser Datei zusaetzlich starten (Profil per "*" freigeschaltet)
     local svc services=() all
-    all=$(sudo docker compose -f "$COMPOSESTACK/$f" --profile "*" config --services 2>/dev/null)
+    all=$(dc "$f" --profile "*" config --services 2>/dev/null)
     for svc in "${SUP_SERVICES[@]}"; do
       grep -qxF "$svc" <<< "$all" && services+=("$svc")
     done
     if [[ ${#services[@]} -gt 0 ]]; then
-      printf "\nRUNNING: sudo docker compose -f %s --profile '*' start %s\n" "$COMPOSESTACK/$f" "${services[*]}"
-      sudo docker compose -f "$COMPOSESTACK/$f" --profile "*" start "${services[@]}" || rc=$?
+      dc "$f" --profile "*" start "${services[@]}" || rc=$?
     fi
   done
   return $rc
