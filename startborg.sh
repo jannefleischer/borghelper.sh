@@ -113,6 +113,18 @@ while [ $# -gt 0 ]; do
     -c=*|--composestack=*)
       COMPOSESTACK="${1#*=}"
       ;;
+    --sudo=*)
+      # auto (Standard): sudo nur, wenn nicht schon root; yes: immer; no: nie
+      SUDO_MODE="${1#*=}"
+      ;;
+    --context=*)
+      # Docker-Kontext fuer compose, z. B. ein Rootless-Daemon; wird beim Aufrufer aufgeloest
+      DOCKER_CONTEXT_NAME="${1#*=}"
+      ;;
+    --dockerhost=*)
+      # Docker-Endpunkt fuer compose, z. B. unix:///run/user/1006/docker.sock
+      DOCKERHOST_ARG="${1#*=}"
+      ;;
     --pdown=*)
       # mehrfach angebbar: Compose-Profile, die beim Stoppen aktiv sind
       PDOWN_ARGS+=(--profile "${1#*=}")
@@ -154,13 +166,38 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       echo "This parameter we can't understand:"
-      echo "possible are: -r (repo), -c (composestack), -f (composefile, repeatable), --pdown (stop profile, repeatable), --pup (start profile, repeatable), --sup (start service regardless of profile, repeatable), -t (stop timeout in seconds), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
+      echo "possible are: -r (repo), -c (composestack), --sudo (auto|yes|no), --context (docker context), --dockerhost (docker endpoint), -f (composefile, repeatable), --pdown (stop profile, repeatable), --pup (start profile, repeatable), --sup (start service regardless of profile, repeatable), -t (stop timeout in seconds), -e (exclude), -a (archive), -h (hot), -p (pre-script), -m (mid-script), -o (post-script)"
       echo $1
       echo "${1#*=}"
       exit 1
   esac
   shift
 done
+
+# sudo: auto = nur, wenn nicht schon root
+case "${SUDO_MODE:-auto}" in
+  auto) if [[ $EUID -eq 0 ]]; then SUDO=(); else SUDO=(sudo); fi ;;
+  yes)  SUDO=(sudo) ;;
+  no)   SUDO=() ;;
+  *)    echo "Error: --sudo must be auto, yes or no, got '$SUDO_MODE'"; exit 2 ;;
+esac
+
+# Kontexte liegen in der Docker-Konfiguration des Aufrufers, root kennt sie unter sudo nicht.
+# Daher hier aufloesen und den Endpunkt als DOCKER_HOST weitergeben.
+# Ohne beides gilt ein DOCKER_HOST aus der Umgebung des Aufrufers.
+if [[ -n "${DOCKERHOST_ARG:-}" ]]; then
+  DOCKER_HOST="$DOCKERHOST_ARG"
+fi
+if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+  if [[ -n "${DOCKERHOST_ARG:-}" ]]; then
+    echo "Error: --context and --dockerhost exclude each other"; exit 2
+  fi
+  DOCKER_HOST=$(env -u DOCKER_HOST docker context inspect "$DOCKER_CONTEXT_NAME" --format '{{.Endpoints.docker.Host}}') || {
+    echo "Error: docker context '$DOCKER_CONTEXT_NAME' not found"; exit 2; }
+fi
+# Umgebung fuer docker compose (sudo setzt sie sonst zurueck)
+DOCKER_ENV=()
+[[ -n "${DOCKER_HOST:-}" ]] && DOCKER_ENV=(DOCKER_HOST="$DOCKER_HOST")
 
 #necessary attributes missing:
 if [[ ( -v REPO && -z $REPO ) || ( -v COMPOSESTACK && -z $COMPOSESTACK ) ]]
@@ -209,12 +246,13 @@ fi
 # --project-directory allein reicht dafuer nicht.
 dc() {
   local f="$1"; shift
+  local cmd=("${SUDO[@]}" env "${DOCKER_ENV[@]}" docker compose)
   if [[ -n "$f" ]]; then
-    printf "\nRUNNING: sudo docker compose -f %s %s\n" "$COMPOSESTACK/$f" "$*"
-    sudo docker compose -f "$COMPOSESTACK/$f" "$@"
+    printf "\nRUNNING: %s -f %s %s\n" "${cmd[*]}" "$COMPOSESTACK/$f" "$*"
+    "${cmd[@]}" -f "$COMPOSESTACK/$f" "$@"
   else
-    printf "\nRUNNING: (cd %s && sudo docker compose %s)\n" "$COMPOSESTACK" "$*"
-    ( cd "$COMPOSESTACK" && sudo docker compose "$@" )
+    printf "\nRUNNING: (cd %s && %s %s)\n" "$COMPOSESTACK" "${cmd[*]}" "$*"
+    ( cd "$COMPOSESTACK" && "${cmd[@]}" "$@" )
   fi
 }
 
@@ -247,11 +285,11 @@ stack_start() {
 }
 
 ISODATE=$(date --iso-8601)
-LISTCOMMAND=$(sudo "${BORG_SUDO_ENV[@]}" borg list --short --glob-archives "$ISODATE*" $REPO)
+LISTCOMMAND=$("${SUDO[@]}" env "${BORG_SUDO_ENV[@]}" borg list --short --glob-archives "$ISODATE*" $REPO)
 #echo "command for existing archives: sudo borg list --short --glob-archives $ISODATE $REPO"
 echo "Existing archives: $LISTCOMMAND \n"
 
-EXISTING_ARCHIVES=$(sudo "${BORG_SUDO_ENV[@]}" borg list --short --glob-archives "$ISODATE*" $REPO | wc -l)
+EXISTING_ARCHIVES=$("${SUDO[@]}" env "${BORG_SUDO_ENV[@]}" borg list --short --glob-archives "$ISODATE*" $REPO | wc -l)
 echo "Existierende Archive:" $EXISTING_ARCHIVES "\n"
 
 #check if archive of today does exist. If it does add a counter to it.
@@ -297,7 +335,7 @@ TARGET_PATH="$COMPOSESTACK"
 
 if [[ -v ENDSTRING && -z $ENDSTRING ]]
 then
-  printf "sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"\n"
+  printf "${SUDO[*]} borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"\n"
   printf "Endstring missing, something wrong"
   exit 2
 else
@@ -340,7 +378,7 @@ else
     fi
 
     # start borgbackup
-    BORGCMD=(sudo "${BORG_SUDO_ENV[@]}" borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH")
+    BORGCMD=("${SUDO[@]}" env "${BORG_SUDO_ENV[@]}" borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH")
 
     # menschenlesbare, sicher gequotete Ausgabe
     printf "\nRUNNING: "
@@ -354,7 +392,7 @@ else
       send_alert_mail "[borg] Borg-Backup fehlgeschlagen: $COMPOSESTACK" "Das Backup fuer Stack '$COMPOSESTACK' (Repo: $REPO) ist mit Exit-Code $BORG_EXIT fehlgeschlagen.\n\nArchiv: $ARCHIVENAME\nHost: $(hostname)\nZeitpunkt: $(date --iso-8601=seconds)"
     fi
 
-    #printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}"  "$ARCHIVE_ARG" "$TARGET_PATH"\n"
+    #printf "\nRUNNING: ${SUDO[*]} borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}"  "$ARCHIVE_ARG" "$TARGET_PATH"\n"
     #sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats "${EXCLUDE_ARGS[@]}"  "$ARCHIVE_ARG" "$TARGET_PATH"
 
     # restart the stack
@@ -379,7 +417,7 @@ else
   else
     # only start borgbackup
     printf "\nRUNNING: sudo borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment 'HOT dump! - taken while docker was running.' "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"\n"
-    sudo "${BORG_SUDO_ENV[@]}" borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment "HOT dump! - taken while docker was running." "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"
+    "${SUDO[@]}" env "${BORG_SUDO_ENV[@]}" borg create --checkpoint-interval=600 --compression zlib,5 --progress --stats --comment "HOT dump! - taken while docker was running." "${EXCLUDE_ARGS[@]}" "$ARCHIVE_ARG" "$TARGET_PATH"
     BORG_EXIT=$?
     if [[ $BORG_EXIT -ne 0 ]]; then
       send_alert_mail "Borg-Backup (HOT) fehlgeschlagen: $COMPOSESTACK" "Das HOT-Backup fuer Stack '$COMPOSESTACK' (Repo: $REPO) ist mit Exit-Code $BORG_EXIT fehlgeschlagen.\n\nArchiv: $ARCHIVENAME\nHost: $(hostname)\nZeitpunkt: $(date --iso-8601=seconds)"
@@ -390,6 +428,6 @@ fi
 # start borgbackup
 
 LISTFORMAT="{archive}\t{time}\t{comment}\n"
-printf "\nRUNNING: sudo borg list $REPO\n"
-ARCHIVELIST=$(sudo "${BORG_SUDO_ENV[@]}" borg list $REPO --format "$LISTFORMAT")
+printf "\nRUNNING: ${SUDO[*]} borg list $REPO\n"
+ARCHIVELIST=$("${SUDO[@]}" env "${BORG_SUDO_ENV[@]}" borg list $REPO --format "$LISTFORMAT")
 printf "$ARCHIVELIST"
